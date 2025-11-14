@@ -1,0 +1,13 @@
+# makepkg output
+*.pkg.tar.*
+src/
+pkg/
+*.log
+*.tar.*
+*.zip
+*.xz
+*.bz2
+
+# Node, Python, etc. (generic safety)
+__pycache__/
+node_modules/
