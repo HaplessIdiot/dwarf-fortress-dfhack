@@ -12,7 +12,7 @@ _dfhack_tag=53.03-r1
 
 # Upstream sources
 source=(
-  "df-${pkgver}-linux.tar.bz2::https://www.bay12games.com/dwarves/df_${pkgver}_linux.tar.bz2"
+  "df-53.03-linux.tar.gz::https://www.bay12games.com/dwarves/df_53_03_linux.tar.gz"
   "dfhack-${_dfhack_tag}-linux-x86_64.tar.xz::https://github.com/DFHack/dfhack/releases/download/${_dfhack_tag}/dfhack-${_dfhack_tag}-linux-x86_64.tar.xz"
   "dwarf-fortress.desktop"
   "LICENSE.custom"
