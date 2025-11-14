@@ -16,8 +16,7 @@ DLAGENTS=('https::/usr/bin/curl -fLC - --retry 3 --retry-delay 2 -A "Mozilla/5.0
 source=(
   "df-53.03-linux.tar.bz2::https://www.bay12games.com/dwarves/df_53_03_linux.tar.bz2"
   "dfhack-${_dfhack_tag}-linux-x86_64.tar.xz::https://github.com/DFHack/dfhack/releases/download/${_dfhack_tag}/dfhack-${_dfhack_tag}-linux-x86_64.tar.xz"
-  "LICENSE.custom"
-)
+  "LICENSE"
 sha256sums=(
   'SKIP'  # set after first successful build via updpkgsums
   'SKIP'
