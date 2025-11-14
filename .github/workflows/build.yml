@@ -1,29 +1,76 @@
-      - name: Create non-root builder user and build package
+name: Build Arch package
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "PKGBUILD"
+      - ".github/workflows/build.yml"
+      - "pinned_libs/**"
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare pacman and install build deps
         run: |
           set -euxo pipefail
 
+          # Configure pacman for non-interactive use
+          sed -i 's/^#Color/Color/' /etc/pacman.conf || true
+          sed -i 's/^#ParallelDownloads/ParallelDownloads/' /etc/pacman.conf || true
+
+          # Initialize keyring and populate with default keys (important in fresh containers)
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Syu --noconfirm
+
+          # Install tools needed to build packages
+          pacman -S --noconfirm base-devel git curl xz
+
+      - name: Create non-root builder user
+        run: |
+          set -euxo pipefail
           # create builder user with bash as shell
           useradd -m -s /bin/bash builder
-          echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
-          chown -R builder:builder "$GITHUB_WORKSPACE"
+          # make workspace writable by builder
+          chown -R builder:builder "${GITHUB_WORKSPACE}"
 
-          # show files for debug
-          su - builder -c "cd $GITHUB_WORKSPACE && ls -la || true"
+      - name: Show workspace (debug)
+        run: |
+          set -euxo pipefail
+          ls -la "${GITHUB_WORKSPACE}"
+        shell: bash
 
-          # Build inside builder account using bash so makepkg sources PKGBUILD with bash
+      - name: Build package as builder (bash)
+        run: |
+          set -euxo pipefail
+
+          # Run makepkg as the builder user, ensuring bash is used to source PKGBUILD
           su - builder -c "bash -lc '
             set -euxo pipefail
             cd \"$GITHUB_WORKSPACE\"
 
-            # Optional: show pinned_libs contents if present
-            if [[ -d pinned_libs ]]; then
-              ls -la pinned_libs || true
-            fi
+            # If pinned_libs exists, show contents (optional)
+            if [[ -d pinned_libs ]]; then ls -la pinned_libs || true; fi
 
-            # Makepkg options:
-            # -s : install missing deps from repos (builder has no sudo, but base-devel installed earlier)
-            # -f : force overwrite existing package files
-            # --skippgpcheck : skip signing verification in CI
+            # build (skip PGP checks in CI)
             MAKEFLAGS=\"-j2\" PKGEXT=\".pkg.tar.zst\" makepkg -sf --noconfirm --skippgpcheck
           '"
-          
+        shell: bash
+
+      - name: Upload built package
+        uses: actions/upload-artifact@v4
+        with:
+          name: dwarf-fortress-dfhack-pkg
+          path: |
+            *.pkg.tar.zst
+            
