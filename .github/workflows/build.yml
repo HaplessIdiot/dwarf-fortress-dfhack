@@ -28,7 +28,7 @@ jobs:
           sed -i 's/^#Color/Color/' /etc/pacman.conf || true
           sed -i 's/^#ParallelDownloads/ParallelDownloads/' /etc/pacman.conf || true
 
-          # Initialize keyring and populate with default keys (important in fresh containers)
+          # Initialize keyring and populate with default keys (necessary in fresh containers)
           pacman-key --init
           pacman-key --populate archlinux
           pacman -Syu --noconfirm
@@ -39,9 +39,7 @@ jobs:
       - name: Create non-root builder user
         run: |
           set -euxo pipefail
-          # create builder user with bash as shell
           useradd -m -s /bin/bash builder
-          # make workspace writable by builder
           chown -R builder:builder "${GITHUB_WORKSPACE}"
 
       - name: Show workspace (debug)
@@ -50,20 +48,30 @@ jobs:
           ls -la "${GITHUB_WORKSPACE}"
         shell: bash
 
-      - name: Build package as builder (bash)
+      - name: Build package as builder (force bash for makepkg)
         run: |
           set -euxo pipefail
 
-          # Run makepkg as the builder user, ensuring bash is used to source PKGBUILD
+          # Ensure builder exists and workspace ownership is correct
+          id builder >/dev/null 2>&1 || useradd -m -s /bin/bash builder
+          chown -R builder:builder "${GITHUB_WORKSPACE}"
+
+          # Run build under builder account; export SHELL=/bin/bash so makepkg sources PKGBUILD with bash
           su - builder -c "bash -lc '
             set -euxo pipefail
             cd \"$GITHUB_WORKSPACE\"
 
-            # If pinned_libs exists, show contents (optional)
+            # Debug listing of repo root
+            ls -la
+
+            # Show pinned_libs if present (optional)
             if [[ -d pinned_libs ]]; then ls -la pinned_libs || true; fi
 
-            # build (skip PGP checks in CI)
-            MAKEFLAGS=\"-j2\" PKGEXT=\".pkg.tar.zst\" makepkg -sf --noconfirm --skippgpcheck
+            # Force makepkg to use bash when sourcing PKGBUILD by exporting SHELL
+            export SHELL=/bin/bash
+
+            # Build (skip PGP checks in CI)
+            MAKEFLAGS=\"-j2\" PKGEXT=\".pkg.tar.zst\" SHELL=/bin/bash makepkg -sf --noconfirm --skippgpcheck
           '"
         shell: bash
 
