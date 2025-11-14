@@ -1,120 +1,80 @@
-pkgname=dwarf-fortress-dfhack
-pkgver=53.03
-pkgrel=1
-pkgdesc="Dwarf Fortress Classic ${pkgver} with DFHack; includes optional pinned runtime libs"
-arch=('x86_64')
-url="https://www.bay12games.com/dwarves/"
-license=('custom')
-depends=('sdl2' 'openal' 'libpng' 'freetype2' 'gcc-libs' 'glibc')
-makedepends=('curl' 'tar' 'xz' 'pacman-contrib')
-optdepends=('dfhack: for DFHack features (bundled by this package)')
+name: Build Arch package
 
-# DFHack tag matching DF ${pkgver}
-_dfhack_tag=53.03-r1
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - PKGBUILD
+      - .github/workflows/build.yml
+      - pinned_libs/**
+  pull_request:
+    branches:
+      - main
 
-# Sources (use exact Bay12 URL you supplied)
-source=(
-  "df-53.03-linux.tar.bz2::https://www.bay12games.com/dwarves/df_53_03_linux.tar.bz2"
-  "dfhack-${_dfhack_tag}-linux-x86_64.tar.xz::https://github.com/DFHack/dfhack/releases/download/${_dfhack_tag}/dfhack-${_dfhack_tag}-linux-x86_64.tar.xz"
-  "LICENSE"
-)
-# Update with real checksums after a successful run
-sha256sums=(
-  'SKIP'
-  'SKIP'
-  'SKIP'
-)
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
 
-# Install root (versioned)
-_instroot="/opt/dwarf-fortress/${pkgver}"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-prepare() {
-  set -euo pipefail
+      - name: Prepare pacman and install build deps
+        run: |
+          set -euxo pipefail
+          sed -i 's/^#Color/Color/' /etc/pacman.conf || true
+          sed -i 's/^#ParallelDownloads/ParallelDownloads/' /etc/pacman.conf || true
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git curl xz
 
-  # Ensure sources exist (makepkg will download them); extract them for packaging
-  mkdir -p "${srcdir}/df" "${srcdir}/dfhack"
+      - name: Create non-root builder user
+        run: |
+          set -euxo pipefail
+          useradd -m -s /bin/bash builder
+          chown -R builder:builder "${GITHUB_WORKSPACE}"
 
-  # Extract DF (bz2)
-  tar -xf "${srcdir}/df-53.03-linux.tar.bz2" -C "${srcdir}/df"
+      - name: Show workspace (debug)
+        run: |
+          set -euxo pipefail
+          ls -la "${GITHUB_WORKSPACE}"
+        shell: bash
 
-  # Extract DFHack (xz)
-  tar -xf "${srcdir}/dfhack-${_dfhack_tag}-linux-x86_64.tar.xz" -C "${srcdir}/dfhack"
+      - name: Build package as builder (force bash for makepkg)
+        run: |
+          set -euxo pipefail
 
-  # Generate a desktop file in srcdir so it's available during package()
-  cat > "${srcdir}/dwarf-fortress.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Dwarf Fortress (DFHack)
-Comment=Dwarf Fortress Classic with DFHack utilities
-Exec=dwarf-fortress
-Icon=dwarf-fortress
-Categories=Game;Simulation;
-Terminal=false
-EOF
-}
+          # Ensure builder exists and workspace ownership is correct
+          id builder >/dev/null 2>&1 || useradd -m -s /bin/bash builder
+          chown -R builder:builder "${GITHUB_WORKSPACE}"
 
-package() {
-  set -euo pipefail
+          # In ephemeral CI container it's safe to symlink /bin/sh to /bin/bash so makepkg sources PKGBUILD with bash
+          if [ -x /bin/bash ]; then
+            rm -f /bin/sh || true
+            ln -s /bin/bash /bin/sh
+          fi
 
-  # Create install root and copy DF files
-  install -dm755 "${pkgdir}${_instroot}"
-  cp -r "${srcdir}/df/"* "${pkgdir}${_instroot}/"
+          # Run build under builder account; export SHELL to ensure makepkg uses bash
+          su - builder -c "bash -lc '
+            set -euxo pipefail
+            cd \"$GITHUB_WORKSPACE\"
 
-  # Overlay DFHack files (DFHack provides a df launcher that wraps DF)
-  cp -r "${srcdir}/dfhack/"* "${pkgdir}${_instroot}/"
+            # Show pinned_libs if present
+            if [[ -d pinned_libs ]]; then ls -la pinned_libs || true; fi
 
-  # Create a lib directory for pinned/shared libs
-  install -dm755 "${pkgdir}${_instroot}/lib"
+            export SHELL=/bin/bash
+            MAKEFLAGS=\"-j2\" PKGEXT=\".pkg.tar.zst\" SHELL=/bin/bash makepkg -sf --noconfirm --skippgpcheck
+          '"
+        shell: bash
 
-  # Copy a minimal set of common runtime SONAMEs from the build host (best-effort).
-  # These will be used by the wrapper via LD_LIBRARY_PATH if present in pinned_libs or on the builder.
-  syslibdir="/usr/lib"
-  for so in libc.so.6 libm.so.6 libstdc++.so.6 libgcc_s.so.1; do
-    if [[ -e "${syslibdir}/${so}" ]]; then
-      install -m644 "${syslibdir}/${so}" "${pkgdir}${_instroot}/lib/${so}"
-    fi
-  done
-
-  # Allow optional pinned libs provided at build time in srcdir/pinned_libs/
-  if [[ -d "${srcdir}/pinned_libs" ]]; then
-    for so in libc.so.6 libm.so.6 libstdc++.so.6 libgcc_s.so.1; do
-      if [[ -e "${srcdir}/pinned_libs/${so}" ]]; then
-        install -m644 "${srcdir}/pinned_libs/${so}" "${pkgdir}${_instroot}/lib/${so}"
-      fi
-    done
-  fi
-
-  # Binary wrapper that prefers bundled libs and launches DF (DFHack-enabled)
-  install -dm755 "${pkgdir}/usr/bin"
-  cat > "${pkgdir}/usr/bin/dwarf-fortress" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-ROOT="/opt/dwarf-fortress/53.03"
-LIBDIR="$ROOT/lib"
-
-# If pinned/bundled libs exist, prefer them
-if [[ -d "$LIBDIR" && "$(ls -A "$LIBDIR" 2>/dev/null || true)" ]]; then
-  export LD_LIBRARY_PATH="$LIBDIR:${LD_LIBRARY_PATH:-}"
-fi
-
-cd "$ROOT"
-# DFHack normally provides ./df that wraps the real binary; execute it so DFHack is active
-exec ./df "$@"
-EOF
-  chmod 755 "${pkgdir}/usr/bin/dwarf-fortress"
-
-  # Desktop entry
-  install -dm755 "${pkgdir}/usr/share/applications"
-  install -m644 "${srcdir}/dwarf-fortress.desktop" "${pkgdir}/usr/share/applications/dwarf-fortress.desktop"
-
-  # Icon (if available in DF data)
-  if [[ -f "${pkgdir}${_instroot}/data/art/icon.png" ]]; then
-    install -dm755 "${pkgdir}/usr/share/icons/hicolor/256x256/apps"
-    install -m644 "${pkgdir}${_instroot}/data/art/icon.png" "${pkgdir}/usr/share/icons/hicolor/256x256/apps/dwarf-fortress.png"
-  fi
-
-  # License
-  install -dm755 "${pkgdir}/usr/share/licenses/${pkgname}"
-  install -m644 "${srcdir}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
-}
+      - name: Upload built package
+        uses: actions/upload-artifact@v4
+        with:
+          name: dwarf-fortress-dfhack-pkg
+          path: |
+            *.pkg.tar.zst
+            
