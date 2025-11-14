@@ -1,0 +1,78 @@
+name: Build Arch package
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "PKGBUILD"
+      - "dwarf-fortress.desktop"
+      - "LICENSE.custom"
+      - ".github/workflows/build.yml"
+      - "pinned_libs/**"
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare Arch build environment
+        run: |
+          set -euxo pipefail
+          # Faster mirrors
+          sed -i 's/^#ParallelDownloads/ParallelDownloads/' /etc/pacman.conf
+          sed -i 's/^#Color/Color/' /etc/pacman.conf
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git curl tar xz
+
+      - name: Create non-root builder user
+        run: |
+          set -euxo pipefail
+          useradd -m builder
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
+          chown -R builder:builder $GITHUB_WORKSPACE
+
+      - name: Build package with makepkg
+        run: |
+          set -euxo pipefail
+          su - builder -c "
+            cd $GITHUB_WORKSPACE
+            # Optional: verify pinned_libs exist
+            ls -la pinned_libs || true
+            # Build without signing; skip PGP checks unless you add keys
+            MAKEFLAGS='-j2' \
+            PKGEXT='.pkg.tar.zst' \
+            makepkg -sf --noconfirm --skippgpcheck
+          "
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dwarf-fortress-dfhack-pkg
+          path: |
+            *.pkg.tar.zst
+
+  # Optional: publish a Release with the built package on tagged pushes
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dwarf-fortress-dfhack-pkg
+          path: pkg-out
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: pkg-out/*.pkg.tar.zst
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
