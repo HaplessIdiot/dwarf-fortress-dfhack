@@ -30,8 +30,7 @@ jobs:
           pacman-key --init
           pacman-key --populate archlinux
           pacman -Syu --noconfirm
-
-          # Install base-devel and runtime/build deps required by PKGBUILD
+          # Install base-devel and all PKGBUILD depends/makedepends
           pacman -S --noconfirm \
             base-devel git curl xz \
             libice gtk3 glu sdl2 sdl2_image sdl2_mixer sdl2_ttf \
@@ -52,17 +51,15 @@ jobs:
       - name: Build package as builder (force bash for makepkg)
         run: |
           set -euxo pipefail
-          # Ensure builder exists and workspace ownership is correct
           id builder >/dev/null 2>&1 || useradd -m -s /bin/bash builder
           chown -R builder:builder "${GITHUB_WORKSPACE}"
 
-          # Ensure /bin/sh is bash so makepkg sources PKGBUILD with bash
+          # Ensure /bin/sh points to bash
           if [ -x /bin/bash ]; then
             rm -f /bin/sh || true
             ln -s /bin/bash /bin/sh
           fi
 
-          # Run makepkg as builder in the workspace
           su - builder -c "bash -lc '
             set -euxo pipefail
             cd \"${GITHUB_WORKSPACE}\"
