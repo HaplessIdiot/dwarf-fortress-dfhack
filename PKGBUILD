@@ -1,5 +1,6 @@
 # Maintainer: Sven-Hendrik Haase <svenstaro@archlinux.org>
 # Added-by: Collin Beyer (patched for DFHack & safer bundled libs)
+
 pkgname=dwarf-fortress-dfhack
 pkgver=53.03
 _pkgver=${pkgver/./_}
