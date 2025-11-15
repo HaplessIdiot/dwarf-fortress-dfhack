@@ -2,15 +2,13 @@ name: Build Arch package
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
     paths:
       - PKGBUILD
       - .github/workflows/build.yml
       - pinned_libs/**
   pull_request:
-    branches:
-      - main
+    branches: [ main ]
 
 jobs:
   build:
@@ -30,51 +28,34 @@ jobs:
           pacman-key --init
           pacman-key --populate archlinux
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git curl xz
+          # Install base-devel and all PKGBUILD depends/makedepends
+          pacman -S --noconfirm \
+            base-devel git curl xz \
+            libice gtk3 glu sdl2 sdl2_image sdl2_mixer sdl2_ttf \
+            libsndfile libsm openal glew gcc cmake
 
       - name: Create non-root builder user
         run: |
           set -euxo pipefail
-          useradd -m -s /bin/bash builder
+          useradd -m -s /bin/bash builder || true
           chown -R builder:builder "${GITHUB_WORKSPACE}"
 
-      - name: Show workspace (debug)
+      - name: Build package as builder
         run: |
           set -euxo pipefail
-          ls -la "${GITHUB_WORKSPACE}"
-        shell: bash
-
-      - name: Build package as builder (force bash for makepkg)
-        run: |
-          set -euxo pipefail
-
-          # Ensure builder exists and workspace ownership is correct
-          id builder >/dev/null 2>&1 || useradd -m -s /bin/bash builder
-          chown -R builder:builder "${GITHUB_WORKSPACE}"
-
-          # In ephemeral CI container it's safe to symlink /bin/sh to /bin/bash so makepkg sources PKGBUILD with bash
-          if [ -x /bin/bash ]; then
-            rm -f /bin/sh || true
-            ln -s /bin/bash /bin/sh
-          fi
-
-          # Run build under builder account; export SHELL to ensure makepkg uses bash
+          # Ensure /bin/sh points to bash
+          rm -f /bin/sh || true
+          ln -s /bin/bash /bin/sh
           su - builder -c "bash -lc '
             set -euxo pipefail
-            cd \"$GITHUB_WORKSPACE\"
-
-            # Show pinned_libs if present
-            if [[ -d pinned_libs ]]; then ls -la pinned_libs || true; fi
-
+            cd \"${GITHUB_WORKSPACE}\"
             export SHELL=/bin/bash
-            MAKEFLAGS=\"-j2\" PKGEXT=\".pkg.tar.zst\" SHELL=/bin/bash makepkg -sf --noconfirm --skippgpcheck
+            MAKEFLAGS=\"-j2\" PKGEXT=\".pkg.tar.zst\" makepkg -sf --noconfirm --skippgpcheck
           '"
-        shell: bash
 
       - name: Upload built package
         uses: actions/upload-artifact@v4
         with:
           name: dwarf-fortress-dfhack-pkg
           path: |
-            *.pkg.tar.zst
-            
+            ${GITHUB_WORKSPACE}/*.pkg.tar.zst
